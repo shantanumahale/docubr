@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useRef, useCallback } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import hljs from "highlight.js";
 import {
   defaultBlockSpecs,
@@ -83,15 +83,10 @@ const CodeBlockRenderer: React.FC<CodeBlockRendererProps> = ({ block, editor }) 
         : "/hljs/github.min.css";
   }, [resolvedTheme]);
 
-  // Run highlight.js whenever the displayed code or language changes
-  const highlight = useCallback(() => {
+  // Highlight with explicit values — never reads stale block.props from closure
+  const runHighlight = (raw: string, lang: string) => {
     if (!codeRef.current) return;
-    const lang = block.props.language || "javascript";
-    const raw = block.props.code || "";
-    if (!raw) {
-      codeRef.current.innerHTML = "";
-      return;
-    }
+    if (!raw) { codeRef.current.innerHTML = ""; return; }
     try {
       const result = hljs.highlight(raw, {
         language: hljs.getLanguage(lang) ? lang : "plaintext",
@@ -101,11 +96,13 @@ const CodeBlockRenderer: React.FC<CodeBlockRendererProps> = ({ block, editor }) 
     } catch {
       codeRef.current.textContent = raw;
     }
-  }, [block.props.code, block.props.language]);
+  };
 
+  // Re-highlight when block props change (e.g. external update or initial mount)
   useEffect(() => {
-    if (!isEditing) highlight();
-  }, [isEditing, highlight]);
+    if (!isEditing) runHighlight(block.props.code || "", block.props.language || "javascript");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [block.props.code, block.props.language, isEditing]);
 
   const startEditing = () => {
     setCode(block.props.code || "");
@@ -114,8 +111,13 @@ const CodeBlockRenderer: React.FC<CodeBlockRendererProps> = ({ block, editor }) 
   };
 
   const saveAndClose = () => {
-    editor.updateBlock(block, { props: { code, language } });
+    // Capture local values before state flush
+    const savedCode = code;
+    const savedLang = language;
+    editor.updateBlock(block, { props: { code: savedCode, language: savedLang } });
     setIsEditing(false);
+    // Re-highlight with local values after the <code> element is mounted
+    requestAnimationFrame(() => runHighlight(savedCode, savedLang));
   };
 
   const handleCopy = async (e: React.MouseEvent) => {
