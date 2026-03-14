@@ -1,12 +1,16 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
-import { BlockNoteEditor } from "@blocknote/core";
+import React, { useEffect, useState, useRef } from "react";
+import {
+  defaultBlockSpecs,
+  getBlockSchemaFromSpecs,
+} from "@blocknote/core";
 import {
   BlockNoteView,
   useBlockNote,
   getDefaultReactSlashMenuItems,
   ReactSlashMenuItem,
+  createReactBlockSpec,
 } from "@blocknote/react";
 import "@blocknote/core/style.css";
 import { useTheme } from "next-themes";
@@ -18,6 +22,8 @@ import {
   AlertTriangle,
   Info,
   CheckCircle,
+  Copy,
+  Check,
 } from "lucide-react";
 
 interface EditorProps {
@@ -26,39 +32,220 @@ interface EditorProps {
   editable?: boolean;
 }
 
-// Custom slash menu item for Code Block
-const insertCodeBlock = (editor: BlockNoteEditor<any, any, any>) => {
-  const currentBlock = editor.getTextCursorPosition().block;
-  
-  // Insert a new paragraph with code-styled content
-  editor.insertBlocks(
-    [
-      {
-        type: "paragraph",
-        content: [
-          {
-            type: "text",
-            text: "// Your code here",
-            styles: { code: true },
-          },
-        ],
-      },
-    ],
-    currentBlock,
-    "after"
+// ── Language data ─────────────────────────────────────────────────────────────
+
+const SUPPORTED_LANGUAGES = [
+  "javascript", "typescript", "python", "java", "csharp", "cpp",
+  "go", "rust", "ruby", "php", "swift", "kotlin", "sql", "html",
+  "css", "json", "yaml", "markdown", "bash", "shell", "dockerfile",
+  "graphql", "jsx", "tsx",
+];
+
+const LANGUAGE_LABELS: Record<string, string> = {
+  javascript: "JavaScript", typescript: "TypeScript", python: "Python",
+  java: "Java", csharp: "C#", cpp: "C++", go: "Go", rust: "Rust",
+  ruby: "Ruby", php: "PHP", swift: "Swift", kotlin: "Kotlin", sql: "SQL",
+  html: "HTML", css: "CSS", json: "JSON", yaml: "YAML", markdown: "Markdown",
+  bash: "Bash", shell: "Shell", dockerfile: "Dockerfile", graphql: "GraphQL",
+  jsx: "JSX", tsx: "TSX",
+};
+
+// ── Code block renderer ───────────────────────────────────────────────────────
+
+interface CodeBlockRendererProps {
+  block: any;
+  editor: any;
+}
+
+const CodeBlockRenderer: React.FC<CodeBlockRendererProps> = ({ block, editor }) => {
+  const [isEditing, setIsEditing] = useState(false);
+  const [code, setCode] = useState<string>(block.props.code || "");
+  const [language, setLanguage] = useState<string>(block.props.language || "javascript");
+  const [copied, setCopied] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const startEditing = () => {
+    setCode(block.props.code || "");
+    setLanguage(block.props.language || "javascript");
+    setIsEditing(true);
+  };
+
+  const saveAndClose = () => {
+    editor.updateBlock(block, { props: { code, language } });
+    setIsEditing(false);
+  };
+
+  const handleCopy = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const text = isEditing ? code : (block.props.code || "");
+    await navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Escape") {
+      saveAndClose();
+      return;
+    }
+    if (e.key === "Tab") {
+      e.preventDefault();
+      const textarea = textareaRef.current!;
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+      const updated = code.substring(0, start) + "  " + code.substring(end);
+      setCode(updated);
+      requestAnimationFrame(() => {
+        textarea.selectionStart = start + 2;
+        textarea.selectionEnd = start + 2;
+      });
+    }
+  };
+
+  const displayCode = isEditing ? code : (block.props.code || "");
+  const displayLang = isEditing ? language : (block.props.language || "javascript");
+  const lines = displayCode.split("\n");
+  const monoFont = "'Fira Code', 'Monaco', 'Consolas', monospace";
+
+  // ── Editing UI ──────────────────────────────────────────────────────────────
+  if (isEditing) {
+    return (
+      <div
+        contentEditable={false}
+        className="rounded-lg border-2 border-blue-400 dark:border-blue-500 bg-neutral-50 dark:bg-neutral-900 overflow-hidden my-2 w-full"
+      >
+        <div className="flex items-center justify-between px-3 py-1.5 border-b border-neutral-200 dark:border-neutral-700 bg-neutral-100 dark:bg-neutral-800">
+          <select
+            value={language}
+            onChange={(e) => setLanguage(e.target.value)}
+            className="text-xs font-medium bg-white dark:bg-neutral-700 text-neutral-700 dark:text-neutral-200 border border-neutral-300 dark:border-neutral-600 rounded px-2 py-0.5 cursor-pointer"
+          >
+            {SUPPORTED_LANGUAGES.map((lang) => (
+              <option key={lang} value={lang}>{LANGUAGE_LABELS[lang] || lang}</option>
+            ))}
+          </select>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleCopy}
+              className="flex items-center gap-1 px-2 py-0.5 text-xs text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 hover:bg-neutral-200 dark:hover:bg-neutral-700 rounded transition-colors"
+            >
+              {copied ? <><Check className="h-3 w-3" /> Copied!</> : <><Copy className="h-3 w-3" /> Copy</>}
+            </button>
+            <button
+              onMouseDown={(e) => { e.preventDefault(); saveAndClose(); }}
+              className="text-xs px-2.5 py-0.5 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors font-medium"
+            >
+              Done
+            </button>
+          </div>
+        </div>
+        <textarea
+          ref={textareaRef}
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+          onKeyDown={handleKeyDown}
+          onBlur={saveAndClose}
+          autoFocus
+          spellCheck={false}
+          placeholder="// Write your code here..."
+          rows={Math.max(5, lines.length + 2)}
+          className="w-full p-4 text-sm leading-relaxed bg-neutral-50 dark:bg-neutral-900 text-neutral-800 dark:text-neutral-200 resize-none outline-none block"
+          style={{ fontFamily: monoFont }}
+        />
+      </div>
+    );
+  }
+
+  // ── View UI ─────────────────────────────────────────────────────────────────
+  return (
+    <div
+      contentEditable={false}
+      className="group rounded-lg border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-900 overflow-hidden my-2 w-full cursor-text"
+      onClick={startEditing}
+    >
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-neutral-200 dark:border-neutral-700 bg-neutral-100 dark:bg-neutral-800/60">
+        <span className="text-xs font-semibold text-neutral-500 dark:text-neutral-400 uppercase tracking-wide">
+          {LANGUAGE_LABELS[displayLang] || displayLang}
+        </span>
+        <button
+          onClick={handleCopy}
+          className="flex items-center gap-1.5 px-2 py-0.5 text-xs font-medium text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 hover:bg-neutral-200 dark:hover:bg-neutral-700 rounded transition-colors"
+        >
+          {copied ? <><Check className="h-3 w-3" /> Copied!</> : <><Copy className="h-3 w-3" /> Copy</>}
+        </button>
+      </div>
+      <div className="overflow-x-auto">
+        <pre className="p-4 text-sm leading-relaxed m-0">
+          <code style={{ fontFamily: monoFont }}>
+            {displayCode ? (
+              lines.map((line: string, index: number) => (
+                <div key={index} className="flex">
+                  <span className="select-none pr-4 text-neutral-400 dark:text-neutral-600 text-right min-w-[2rem] flex-shrink-0">
+                    {index + 1}
+                  </span>
+                  <span className="flex-1 text-neutral-800 dark:text-neutral-200 whitespace-pre">
+                    {line || " "}
+                  </span>
+                </div>
+              ))
+            ) : (
+              <span className="text-neutral-400 dark:text-neutral-500 italic">
+                Click to write code...
+              </span>
+            )}
+          </code>
+        </pre>
+      </div>
+      <div className="px-3 py-1 text-xs text-neutral-400 dark:text-neutral-600 border-t border-neutral-200 dark:border-neutral-800 opacity-0 group-hover:opacity-100 transition-opacity">
+        Click to edit · Esc to close · Tab to indent
+      </div>
+    </div>
   );
 };
 
+// ── Custom BlockNote block spec ───────────────────────────────────────────────
+
+const codeBlockSpec = createReactBlockSpec(
+  {
+    type: "codeBlock" as const,
+    propSchema: {
+      language: { default: "javascript" },
+      code: { default: "" },
+    },
+    content: "none" as const,
+  },
+  {
+    render: ({ block, editor }: { block: any; editor: any; contentRef: any }) => (
+      <CodeBlockRenderer block={block} editor={editor} />
+    ),
+  }
+);
+
+const blockSpecs = {
+  ...defaultBlockSpecs,
+  codeBlock: codeBlockSpec,
+};
+
+const blockSchema = getBlockSchemaFromSpecs(blockSpecs);
+
+// ── Slash menu items ──────────────────────────────────────────────────────────
+
 const codeBlockItem: ReactSlashMenuItem<any, any, any> = {
   name: "Code Block",
-  execute: insertCodeBlock,
+  execute: (editor) => {
+    const currentBlock = editor.getTextCursorPosition().block;
+    editor.insertBlocks(
+      [{ type: "codeBlock", props: { code: "", language: "javascript" } }],
+      currentBlock,
+      "after"
+    );
+  },
   aliases: ["code", "codeblock", "pre", "```", "snippet"],
   group: "Code",
   icon: <Code size={18} />,
-  hint: "Insert a code block",
+  hint: "Insert an editable code block with syntax highlighting",
 };
 
-// Custom slash menu item for Note callout
 const noteCalloutItem: ReactSlashMenuItem<any, any, any> = {
   name: "Note",
   execute: (editor) => {
@@ -77,7 +264,6 @@ const noteCalloutItem: ReactSlashMenuItem<any, any, any> = {
   hint: "Insert a note callout",
 };
 
-// Custom slash menu item for Tip callout
 const tipCalloutItem: ReactSlashMenuItem<any, any, any> = {
   name: "Tip",
   execute: (editor) => {
@@ -96,7 +282,6 @@ const tipCalloutItem: ReactSlashMenuItem<any, any, any> = {
   hint: "Insert a tip callout",
 };
 
-// Custom slash menu item for Warning callout
 const warningCalloutItem: ReactSlashMenuItem<any, any, any> = {
   name: "Warning",
   execute: (editor) => {
@@ -115,7 +300,6 @@ const warningCalloutItem: ReactSlashMenuItem<any, any, any> = {
   hint: "Insert a warning callout",
 };
 
-// Custom slash menu item for Danger callout
 const dangerCalloutItem: ReactSlashMenuItem<any, any, any> = {
   name: "Danger",
   execute: (editor) => {
@@ -134,7 +318,6 @@ const dangerCalloutItem: ReactSlashMenuItem<any, any, any> = {
   hint: "Insert a danger callout",
 };
 
-// Custom slash menu item for Success callout
 const successCalloutItem: ReactSlashMenuItem<any, any, any> = {
   name: "Success",
   execute: (editor) => {
@@ -153,6 +336,8 @@ const successCalloutItem: ReactSlashMenuItem<any, any, any> = {
   hint: "Insert a success callout",
 };
 
+// ── Editor component ──────────────────────────────────────────────────────────
+
 const Editor: React.FC<EditorProps> = ({
   onChange,
   initialContent,
@@ -167,24 +352,12 @@ const Editor: React.FC<EditorProps> = ({
   }, []);
 
   const handleUpload = async (file: File) => {
-    const response = await edgestore.publicFiles.upload({
-      file,
-    });
+    const response = await edgestore.publicFiles.upload({ file });
     return response.url;
   };
 
-  // Get default items and add custom ones
-  const customSlashMenuItems = [
-    ...getDefaultReactSlashMenuItems(),
-    codeBlockItem,
-    noteCalloutItem,
-    tipCalloutItem,
-    warningCalloutItem,
-    dangerCalloutItem,
-    successCalloutItem,
-  ];
-
-  const editor: BlockNoteEditor = useBlockNote({
+  const editor = useBlockNote({
+    blockSpecs,
     editable,
     initialContent: initialContent
       ? (JSON.parse(initialContent) as any)
@@ -193,7 +366,15 @@ const Editor: React.FC<EditorProps> = ({
       onChange(JSON.stringify(editor.topLevelBlocks, null, 2));
     },
     uploadFile: handleUpload,
-    slashMenuItems: customSlashMenuItems,
+    slashMenuItems: [
+      ...getDefaultReactSlashMenuItems(blockSchema),
+      codeBlockItem,
+      noteCalloutItem,
+      tipCalloutItem,
+      warningCalloutItem,
+      dangerCalloutItem,
+      successCalloutItem,
+    ],
   });
 
   if (!mounted) {
@@ -205,46 +386,10 @@ const Editor: React.FC<EditorProps> = ({
   }
 
   return (
-    <div className="relative">
-      <BlockNoteView
-        editor={editor}
-        theme={resolvedTheme === "dark" ? "dark" : "light"}
-      />
-      <style jsx global>{`
-        /* Enhanced code styling */
-        .bn-editor .bn-inline-content [data-text-style-code="true"],
-        .bn-editor code {
-          background: #1e1e1e;
-          color: #d4d4d4;
-          padding: 0.2rem 0.4rem;
-          border-radius: 4px;
-          font-family: 'Fira Code', 'Monaco', 'Consolas', 'Courier New', monospace;
-          font-size: 0.875em;
-        }
-        
-        /* Light theme code */
-        [data-theme="light"] .bn-editor .bn-inline-content [data-text-style-code="true"],
-        [data-theme="light"] .bn-editor code {
-          background: #f6f8fa;
-          color: #24292f;
-        }
-        
-        /* Slash menu styling */
-        .bn-slash-menu {
-          max-height: 400px;
-          overflow-y: auto;
-        }
-        
-        /* Group headers in slash menu */
-        .bn-slash-menu .bn-slash-menu-group-label {
-          font-size: 0.75rem;
-          font-weight: 600;
-          text-transform: uppercase;
-          color: #6b7280;
-          padding: 0.5rem 0.75rem;
-        }
-      `}</style>
-    </div>
+    <BlockNoteView
+      editor={editor}
+      theme={resolvedTheme === "dark" ? "dark" : "light"}
+    />
   );
 };
 
