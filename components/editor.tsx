@@ -145,6 +145,13 @@ const CodeBlockRenderer: React.FC<CodeBlockRendererProps> = ({ block, editor }) 
   const monoFont = "'Fira Code', 'Monaco', 'Consolas', monospace";
 
   // ── Editing UI ──────────────────────────────────────────────────────────────
+  // Close only when focus leaves the entire block container
+  const handleContainerBlur = (e: React.FocusEvent<HTMLDivElement>) => {
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+      saveAndClose();
+    }
+  };
+
   if (isEditing) {
     const lines = code.split("\n");
     return (
@@ -152,6 +159,7 @@ const CodeBlockRenderer: React.FC<CodeBlockRendererProps> = ({ block, editor }) 
         contentEditable={false}
         className="rounded-lg border-2 border-blue-400 dark:border-blue-500 overflow-hidden my-2 w-full"
         style={{ background: resolvedTheme === "dark" ? "#0d1117" : "#f6f8fa" }}
+        onBlur={handleContainerBlur}
       >
         <div className="flex items-center justify-between px-3 py-1.5 border-b border-neutral-200 dark:border-neutral-700 bg-neutral-100 dark:bg-neutral-800">
           <select
@@ -183,7 +191,6 @@ const CodeBlockRenderer: React.FC<CodeBlockRendererProps> = ({ block, editor }) 
           value={code}
           onChange={(e) => setCode(e.target.value)}
           onKeyDown={handleKeyDown}
-          onBlur={saveAndClose}
           autoFocus
           spellCheck={false}
           placeholder="// Write your code here..."
