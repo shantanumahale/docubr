@@ -48,7 +48,7 @@ A modern, feature-rich technical documentation platform built with Next.js 14, C
 
 ### Prerequisites
 
-- Node.js 18+
+- Node.js 24+ (required for Vercel deployment)
 - npm or yarn
 - Convex account
 - Clerk account
